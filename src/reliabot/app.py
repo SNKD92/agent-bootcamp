@@ -22,7 +22,7 @@ async_weaviate_client = get_weaviate_async_client(
 async_openai_client = AsyncOpenAI()
 async_knowledgebase = AsyncWeaviateKnowledgeBase(
     async_weaviate_client,
-    collection_name="devops_reasoning_trace",
+    collection_name="Devops_reasoning_traces",
 )
 
 DESCRIPTION = """\

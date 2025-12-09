@@ -22,7 +22,7 @@ async_weaviate_client = get_weaviate_async_client(
 async_openai_client = AsyncOpenAI()
 async_knowledgebase = AsyncWeaviateKnowledgeBase(
     async_weaviate_client,
-    collection_name="enwiki_20250520",
+    collection_name="devops_reasoning_trace",
 )
 
 DESCRIPTION = """\
@@ -34,6 +34,7 @@ async def search_and_pretty_format(keyword: str) -> str:
     """Search knowledgebase and pretty-format output."""
     output = await async_knowledgebase.search_knowledgebase(keyword)
     return pretty_print(output)
+
 
 json_codeblock = gr.Code(language="json", wrap_lines=True)
 

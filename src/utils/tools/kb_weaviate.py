@@ -17,8 +17,8 @@ from ..async_utils import rate_limited
 class _Source(pydantic.BaseModel):
     """Type hints for the "_source" field in ES Search Results."""
 
-    title: str
-    section: str | None = None
+    reasoning_trace: str
+    chain_of_thought: str | None = None
 
 
 class _Highlight(pydantic.BaseModel):
@@ -111,8 +111,8 @@ class AsyncWeaviateKnowledgeBase:
         for obj in response.objects:
             hit = {
                 "_source": {
-                    "title": obj.properties.get("title", ""),
-                    "section": obj.properties.get("section", None),
+                    "chain_of_thought": str(obj.properties.get("chain_of_thought", "")),   ####Change to the actual dataset headers
+                    "reasoning_trace": str(obj.properties.get("reasoning_trace", str(None))),
                 },
                 "highlight": {
                     "text": [obj.properties.get("text", "")[: self.snippet_length]]

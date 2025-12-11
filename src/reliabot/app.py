@@ -10,6 +10,9 @@ import sys
 
 import agents
 import gradio as gr
+import os
+from agents.mcp import MCPServerStdio
+from agents.mcp import create_static_tool_filter
 from dotenv import load_dotenv
 from gradio.components.chatbot import ChatMessage
 from openai import AsyncOpenAI
@@ -66,31 +69,28 @@ def _handle_sigint(signum: int, frame: object) -> None:
 async def _main(question: str, gr_messages: list[ChatMessage]):
     setup_langfuse_tracer()
 
-   """Initialize MCP Git server and run the agent."""
-    
-    
     repo_path = os.path.abspath("/home/coder/agent-bootcamp")
 
 
-        async with MCPServerStdio(
-            name="Git server",
-            params={
-                "command": "uvx",
-                "args": ["mcp-server-git"],
-            },
-            tool_filter=create_static_tool_filter(
-                allowed_tool_names=["git_status", "git_log"]
+    async with MCPServerStdio(
+        name="Git server",
+        params={
+            "command": "uvx",
+            "args": ["mcp-server-git"],
+        },
+        tool_filter=create_static_tool_filter(
+            allowed_tool_names=["git_status", "git_log"]
+    ) )as mcp_server:
+        git_agent = agents.Agent(
+            name="Git Assistant",
+            instructions=f"Answer questions about the git repository at {repo_path}, use that for repo_path",
+            mcp_servers=[mcp_server],
+            model=agents.OpenAIChatCompletionsModel(
+                model=AGENT_LLM_NAME, openai_client=async_openai_client
             ),
-        ) as mcp_server:
-            agent = agents.Agent(
-                name="Git Assistant",
-                instructions=f"Answer questions about the git repository at {repo_path}, use that for repo_path",
-                mcp_servers=[mcp_server],
-                model=agents.OpenAIChatCompletionsModel(
-                    model=AGENT_LLM_NAME, openai_client=async_openai_client
-                ),
-            )
-    reasoning_agent = agents.Agent(.
+        )
+    
+    reasoning_agent = agents.Agent(
         name="Reliabot",
         instructions=REACT_INSTRUCTIONS,
         tools=[agents.function_tool(async_knowledgebase.search_knowledgebase)],
@@ -114,7 +114,7 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
                     "the summary"
                 ),
             ),
-            agent.as_tool(
+            git_agent.as_tool(
                 tool_name="Git MCP server",
                 tool_description=(
                     "Search the Git repo for a info about the issue "

@@ -69,27 +69,8 @@ def _handle_sigint(signum: int, frame: object) -> None:
 async def _main(question: str, gr_messages: list[ChatMessage]):
     setup_langfuse_tracer()
 
-    repo_path = os.path.abspath("/home/coder/agent-bootcamp")
+    repo_path = os.path.abspath("/home/coder/agent-bootcamp/")
 
-
-    async with MCPServerStdio(
-        name="Git server",
-        params={
-            "command": "uvx",
-            "args": ["mcp-server-git"],
-        },
-        tool_filter=create_static_tool_filter(
-            allowed_tool_names=["git_status", "git_log"]
-    ) )as mcp_server:
-        git_agent = agents.Agent(
-            name="Git Assistant",
-            instructions=f"Answer questions about the git repository at {repo_path}, use that for repo_path",
-            mcp_servers=[mcp_server],
-            model=agents.OpenAIChatCompletionsModel(
-                model=AGENT_LLM_NAME, openai_client=async_openai_client
-            ),
-        )
-    
     reasoning_agent = agents.Agent(
         name="Reliabot",
         instructions=REACT_INSTRUCTIONS,
@@ -98,47 +79,63 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
             model=AGENT_LLM_NAME, openai_client=async_openai_client
         ),
     )
-
-    main_agent = agents.Agent(
-        name="MainAgent",
-        instructions="""
-        """,
-        # Allow the planner agent to invoke the worker agent.
-        # The long context provided to the worker agent is hidden from the main agent.
-        tools=[
-            reasoning_agent.as_tool(
-                tool_name="reasoning_agent",
-                tool_description=(
-                    "Search the knowledge base for a query and return a concise summary "
-                    "of the key findings, along with the sources used to generate "
-                    "the summary"
+    async with MCPServerStdio(
+        name="Git server",
+        params={
+            "command": "uvx",
+            "args": ["mcp-server-git"],
+        },
+     )as mcp_server:
+        git_agent = agents.Agent(
+            name="Git Assistant",
+            instructions=f"Answer questions about the git repository at {repo_path}, use that for repo_path",
+            mcp_servers=[mcp_server],
+            model=agents.OpenAIChatCompletionsModel(
+                model=AGENT_LLM_NAME, openai_client=async_openai_client
+            ))
+        main_agent = agents.Agent(
+            name="MainAgent",
+            instructions="""
+                You are the main agent. You orchestrating git agent and reasoning agent. When user asks about files check the git repo.
+                When user asks about issue check the reasoning agent.
+            """,
+            # Allow the planner agent to invoke the worker agent.
+            # The long context provided to the worker agent is hidden from the main agent.
+            tools=[
+                reasoning_agent.as_tool(
+                    tool_name="reasoning_agent",
+                    tool_description=(
+                        "Search the knowledge base for a query and return a concise summary "
+                        "of the key findings, along with the sources used to generate "
+                        "the summary"
+                    ),
                 ),
+                git_agent.as_tool(
+                    tool_name="Git_MCP_server",
+                    tool_description=(
+                        "Search the Git repo for a info about the issue "
+                    ),  
+                ),
+            ],
+            # a larger, more capable model for planning and reasoning over summaries
+            model=agents.OpenAIChatCompletionsModel(
+                model=AGENT_LLM_NAME, openai_client=async_openai_client
             ),
-            git_agent.as_tool(
-                tool_name="Git MCP server",
-                tool_description=(
-                    "Search the Git repo for a info about the issue "
-                ),  
-            ),
-        ],
-        # a larger, more capable model for planning and reasoning over summaries
-        model=agents.OpenAIChatCompletionsModel(
-            model=AGENT_LLM_NAME, openai_client=async_openai_client
-        ),
-    )
-    with langfuse_client.start_as_current_span(name="Reliabot") as span:
-        span.update(input=question)
+        )
+        with langfuse_client.start_as_current_span(name="Reliabot") as span:
+            span.update(input=question)
 
-        result_stream = agents.Runner.run_streamed(main_agent, input=question)
-        async for _item in result_stream.stream_events():
-            gr_messages += oai_agent_stream_to_gradio_messages(_item)
-            if len(gr_messages) > 0:
-                yield gr_messages
+            result_stream = agents.Runner.run_streamed(main_agent, input=question)
+            async for _item in result_stream.stream_events():
+                gr_messages += oai_agent_stream_to_gradio_messages(_item)
+                if len(gr_messages) > 0:
+                    yield gr_messages
 
-        span.update(output=result_stream.final_output)
+            span.update(output=result_stream.final_output)
 
-    pretty_print(gr_messages)
-    yield gr_messages
+        pretty_print(gr_messages)
+        yield gr_messages
+
 
 
 demo = gr.ChatInterface(

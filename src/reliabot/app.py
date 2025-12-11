@@ -123,7 +123,7 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
         ],
         # a larger, more capable model for planning and reasoning over summaries
         model=agents.OpenAIChatCompletionsModel(
-            model=AGENT_LLM_NAMES, openai_client=async_openai_client
+            model=AGENT_LLM_NAME, openai_client=async_openai_client
         ),
     )
     with langfuse_client.start_as_current_span(name="Reliabot") as span:

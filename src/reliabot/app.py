@@ -93,6 +93,21 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
             model=agents.OpenAIChatCompletionsModel(
                 model=AGENT_LLM_NAME, openai_client=async_openai_client
             ))
+    async with MCPServerStdio(
+        name="GCP Compute server",
+        params={
+            "command": "python",
+            "args": ["mcp_gcloud_compute.py"],
+        },
+    ) as compute_mcp_server:
+        compute_agent = agents.Agent(
+            name="GCP Compute Assistant",
+            instructions="Answer questions about GCP Compute Engine using the MCP server.",
+            mcp_servers=[compute_mcp_server],
+            model=agents.OpenAIChatCompletionsModel(
+                model=AGENT_LLM_NAME, openai_client=async_openai_client
+            ),
+        )
         main_agent = agents.Agent(
             name="MainAgent",
             instructions="""
@@ -115,6 +130,10 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
                     tool_description=(
                         "Search the Git repo for a info about the issue "
                     ),  
+                ),
+                compute_agent.as_tool(
+                    tool_name="GCP_Compute_MCP",
+                    tool_description="Query GCP Compute Engine (instances, zones, metadata) via MCP",
                 ),
             ],
             # a larger, more capable model for planning and reasoning over summaries

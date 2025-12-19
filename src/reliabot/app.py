@@ -97,7 +97,7 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
         name="GCP Compute server",
         params={
             "command": "python",
-            "args": ["mcp_gcloud_compute.py"],
+            "args": ["/home/coder/agent-bootcamp/src/reliabot/mcp_gcloud_compute.py"],
         },
     ) as compute_mcp_server:
         compute_agent = agents.Agent(

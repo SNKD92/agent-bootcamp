@@ -220,6 +220,38 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
         r.raise_for_status()
         return parse_mcp_result(r.json())
 
+    # ✅ MINIMAL ADD: stop tool (fire-and-forget handled by MCP server)
+    @function_tool
+    async def gcp_stop_instance(project: str, zone: str, name: str) -> dict:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "gcp-stop",
+            "method": "tools/call",
+            "params": {
+                "name": "stop_instance",
+                "arguments": {
+                    "project": project,
+                    "zone": zone,
+                    "name": name,
+                },
+            },
+        }
+
+        print(f"[DEBUG][APP][PID {os.getpid()}] STOP payload = {payload}")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                "http://127.0.0.1:3334/mcp",
+                content=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+
+        print(f"[DEBUG][APP] STOP HTTP status = {r.status_code}")
+        print(f"[DEBUG][APP] STOP raw response = {r.text}")
+
+        r.raise_for_status()
+        return parse_mcp_result(r.json())
+
     # ─────────────────────────────────────────
     # Main orchestrator agent
     # ─────────────────────────────────────────
@@ -235,6 +267,9 @@ If a project alias is mentioned:
 3. If user asks to start a VM:
    - Choose a TERMINATED instance
    - Start it automatically
+4. If user asks to stop a VM:
+   - Choose a RUNNING instance
+   - Stop it automatically (fire-and-forget)
 """,
         tools=[
             reasoning_agent.as_tool(
@@ -244,6 +279,7 @@ If a project alias is mentioned:
             load_project_context,
             gcp_list_instances,
             gcp_start_instance,
+            gcp_stop_instance,  # ✅ MINIMAL ADD: register the tool
         ],
         model=agents.OpenAIChatCompletionsModel(
             model=AGENT_LLM_NAME,

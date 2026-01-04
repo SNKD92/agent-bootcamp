@@ -9,6 +9,10 @@ import contextlib
 import signal
 import sys
 import threading
+import json
+from pathlib import Path
+import multiprocessing
+import os  # DEBUG
 
 import agents
 import gradio as gr
@@ -33,6 +37,20 @@ from src.utils import (
     setup_langfuse_tracer,
 )
 from src.utils.langfuse.shared_client import langfuse_client
+
+
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
+
+def parse_mcp_result(data: dict) -> dict:
+    print(f"[DEBUG][APP][PID {os.getpid()}] parse_mcp_result raw = {data}")
+    result = data.get("result", {})
+    if "content" in result:
+        parsed = json.loads(result["content"][0]["text"])
+        print(f"[DEBUG][APP][PID {os.getpid()}] parse_mcp_result parsed = {parsed}")
+        return parsed
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -68,6 +86,7 @@ async_knowledgebase = AsyncWeaviateKnowledgeBase(
 # ─────────────────────────────────────────────
 
 def start_compute_mcp_server():
+    print(f"[DEBUG][MCP] Starting MCP server PID={os.getpid()}")
     uvicorn.run(
         compute_mcp_app,
         host="127.0.0.1",
@@ -96,6 +115,7 @@ def _handle_sigint(signum: int, frame: object) -> None:
 # ─────────────────────────────────────────────
 
 async def _main(question: str, gr_messages: list[ChatMessage]):
+    print(f"[DEBUG][APP][PID {os.getpid()}] User question = {question}")
     setup_langfuse_tracer()
 
     reasoning_agent = agents.Agent(
@@ -109,29 +129,96 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
     )
 
     # ─────────────────────────────────────────
-    # GCP HTTP tool (NO MCP abstraction)
+    # Context loader tool
+    # ─────────────────────────────────────────
+
+    @function_tool
+    async def load_project_context(alias: str) -> dict:
+        print(f"[DEBUG][APP] load_project_context alias={alias}")
+        path = Path(__file__).parent / "contexts" / f"{alias.lower()}.env"
+        if not path.exists():
+            raise RuntimeError(f"Unknown project context: {alias}")
+
+        data = {}
+        for line in path.read_text().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                data[k.strip()] = v.strip()
+
+        ctx = {
+            "project": data["PROJECT_ID"],
+            "zone": data["ZONE"],
+        }
+        print(f"[DEBUG][APP] loaded context = {ctx}")
+        return ctx
+
+    # ─────────────────────────────────────────
+    # GCP MCP tools
     # ─────────────────────────────────────────
 
     @function_tool
     async def gcp_list_instances(project: str, zone: str) -> dict:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "gcp-list",
+            "method": "tools/call",
+            "params": {
+                "name": "list_instances",
+                "arguments": {
+                    "project": project,
+                    "zone": zone,
+                },
+            },
+        }
+
+        print(f"[DEBUG][APP][PID {os.getpid()}] LIST payload = {payload}")
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 "http://127.0.0.1:3334/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": "gcp-list",
-                    "method": "tools/call",
-                    "params": {
-                        "name": "list_instances",
-                        "arguments": {
-                            "project": project,
-                            "zone": zone,
-                        },
-                    },
-                },
+                content=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
             )
-            r.raise_for_status()
-            return r.json()
+
+        print(f"[DEBUG][APP] LIST HTTP status = {r.status_code}")
+        print(f"[DEBUG][APP] LIST raw response = {r.text}")
+
+        r.raise_for_status()
+        data = r.json()
+        if "error" in data:
+            raise RuntimeError(data["error"])
+        return parse_mcp_result(data)
+
+    @function_tool
+    async def gcp_start_instance(project: str, zone: str, name: str) -> dict:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "gcp-start",
+            "method": "tools/call",
+            "params": {
+                "name": "start_instance",
+                "arguments": {
+                    "project": project,
+                    "zone": zone,
+                    "name": name,
+                },
+            },
+        }
+
+        print(f"[DEBUG][APP][PID {os.getpid()}] START payload = {payload}")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                "http://127.0.0.1:3334/mcp",
+                content=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+
+        print(f"[DEBUG][APP] START HTTP status = {r.status_code}")
+        print(f"[DEBUG][APP] START raw response = {r.text}")
+
+        r.raise_for_status()
+        return parse_mcp_result(r.json())
 
     # ─────────────────────────────────────────
     # Main orchestrator agent
@@ -141,25 +228,28 @@ async def _main(question: str, gr_messages: list[ChatMessage]):
         name="MainAgent",
         instructions="""
 You are the main agent.
-- Incidents / history → reasoning_agent
-- Live GCP state → gcp_list_instances
+
+If a project alias is mentioned:
+1. Load its context
+2. List instances
+3. If user asks to start a VM:
+   - Choose a TERMINATED instance
+   - Start it automatically
 """,
         tools=[
             reasoning_agent.as_tool(
                 tool_name="reasoning_agent",
                 tool_description="Search historical knowledge base.",
             ),
+            load_project_context,
             gcp_list_instances,
+            gcp_start_instance,
         ],
         model=agents.OpenAIChatCompletionsModel(
             model=AGENT_LLM_NAME,
             openai_client=async_openai_client,
         ),
     )
-
-    # ─────────────────────────────────────────
-    # Run + tracing
-    # ─────────────────────────────────────────
 
     with langfuse_client.start_as_current_span(name="Reliabot") as span:
         span.update(input=question)
@@ -189,7 +279,9 @@ demo = gr.ChatInterface(
     title="0.1beta Reliabot + LangFuse",
     type="messages",
     examples=[
-        "List compute instances in project project-e7b71f6e-c56d-438f-a7e zone us-central1-a",
+        "Start a VM in Denis",
+        "Bring up the VM in Amandeep",
+        "Start the stopped instance in Rameesha",
     ],
 )
 
@@ -197,8 +289,7 @@ demo = gr.ChatInterface(
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, _handle_sigint)
 
-    # ✅ START MCP HTTP SERVER ONCE (server process only)
-    threading.Thread(
+    multiprocessing.Process(
         target=start_compute_mcp_server,
         daemon=True,
     ).start()

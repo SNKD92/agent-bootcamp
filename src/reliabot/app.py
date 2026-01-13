@@ -266,8 +266,9 @@ You have access to recent GCP actions.
 # Creates and launches a Gradio ChatInterface for the application
 demo = gr.ChatInterface(
     _main,
-    title="0.1beta Reliabot + LangFuse",
+    title="Reliabot Alpha v1",
     type="messages",
+    theme="glass",
     examples=[
         "Start a VM in Denis",
         "Bring up the VM in Amandeep",

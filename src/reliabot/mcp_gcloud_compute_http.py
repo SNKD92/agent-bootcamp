@@ -12,14 +12,10 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 app = FastAPI()
-
 _compute_client = None
 
 
-# ─────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────
-
+# Returns a cached Google Compute client, creating it on first use
 def get_compute_client():
     global _compute_client
     if _compute_client is None:
@@ -27,6 +23,7 @@ def get_compute_client():
     return _compute_client
 
 
+# Builds a JSON-RPC success response with result payload
 def jsonrpc_result(result: Any, id: str):
     return {
         "jsonrpc": "2.0",
@@ -35,6 +32,7 @@ def jsonrpc_result(result: Any, id: str):
     }
 
 
+# Builds a JSON-RPC error response with message
 def jsonrpc_error(message: str, id: str):
     return {
         "jsonrpc": "2.0",
@@ -46,43 +44,26 @@ def jsonrpc_error(message: str, id: str):
     }
 
 
-# ─────────────────────────────────────────────
-# Compute handlers
-# ─────────────────────────────────────────────
-
+# Retrieves list of VM instances with name and status
 def list_instances(project: str, zone: str) -> Dict[str, Any]:
     compute = get_compute_client()
-    resp = compute.instances().list(
-        project=project,
-        zone=zone,
-    ).execute()
+    resp = compute.instances().list(project=project, zone=zone).execute()
 
-    instances = []
-    for inst in resp.get("items", []):
-        instances.append(
-            {
-                "name": inst["name"],
-                "status": inst["status"],
-            }
-        )
+    instances = [
+        {"name": inst["name"], "status": inst["status"]}
+        for inst in resp.get("items", [])
+    ]
 
-    return {
-        "instances": instances,
-    }
+    return {"instances": instances}
 
 
+# Sends a start request for a specific VM and returns the operation ID
 def start_instance(project: str, zone: str, name: str) -> Dict[str, Any]:
     compute = get_compute_client()
 
-    op = (
-        compute.instances()
-        .start(
-            project=project,
-            zone=zone,
-            instance=name,
-        )
-        .execute()
-    )
+    op = compute.instances().start(
+        project=project, zone=zone, instance=name
+    ).execute()
 
     return {
         "status": "STARTING",
@@ -91,19 +72,13 @@ def start_instance(project: str, zone: str, name: str) -> Dict[str, Any]:
     }
 
 
-# ✅ MINIMAL ADD: fire-and-forget stop
+# Sends a stop request for a specific VM and returns the operation ID
 def stop_instance(project: str, zone: str, name: str) -> Dict[str, Any]:
     compute = get_compute_client()
 
-    op = (
-        compute.instances()
-        .stop(
-            project=project,
-            zone=zone,
-            instance=name,
-        )
-        .execute()
-    )
+    op = compute.instances().stop(
+        project=project, zone=zone, instance=name
+    ).execute()
 
     return {
         "status": "STOPPING",
@@ -112,10 +87,7 @@ def stop_instance(project: str, zone: str, name: str) -> Dict[str, Any]:
     }
 
 
-# ─────────────────────────────────────────────
-# MCP endpoint
-# ─────────────────────────────────────────────
-
+# Main MCP endpoint that routes JSON-RPC calls to specific compute operations
 @app.post("/mcp")
 async def mcp(request: Request):
     payload = await request.json()
@@ -127,25 +99,13 @@ async def mcp(request: Request):
 
     try:
         if tool_name == "list_instances":
-            result = list_instances(
-                project=args["project"],
-                zone=args["zone"],
-            )
+            result = list_instances(args["project"], args["zone"])
 
         elif tool_name == "start_instance":
-            result = start_instance(
-                project=args["project"],
-                zone=args["zone"],
-                name=args["name"],
-            )
+            result = start_instance(args["project"], args["zone"], args["name"])
 
-        # ✅ MINIMAL ADD: tool routing
         elif tool_name == "stop_instance":
-            result = stop_instance(
-                project=args["project"],
-                zone=args["zone"],
-                name=args["name"],
-            )
+            result = stop_instance(args["project"], args["zone"], args["name"])
 
         else:
             return jsonrpc_error(f"Unknown tool: {tool_name}", rpc_id)
